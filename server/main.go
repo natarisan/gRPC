@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"gRPC/pb"
 	"io"
@@ -12,6 +13,8 @@ import (
 	"os"
 	"time"
 
+	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
+	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	"google.golang.org/grpc"
 )
 
@@ -123,13 +126,40 @@ func (*server) UploadAndNotifyProgress(stream pb.FileService_UploadAndNotifyProg
 
 }
 
+func myLogging() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		log.Printf("request data: %v", req)
+		resp, err = handler(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		log.Printf("response data: %v", resp)
+
+		return resp, nil
+	}
+}
+
+func authorize(ctx context.Context) (context.Context, error) {
+	token, err := grpc_auth.AuthFromMD(ctx, "Bearer")
+	if err != nil {
+		return nil, err
+	}
+	if token != "test-token" {
+		return nil, errors.New("bad token")
+	}
+	return ctx, nil
+}
+
 func main() {
 	listen, err := net.Listen("tcp", "localhost:50051")
 	if err != nil {
 		log.Fatalf("Failed to listen %v", err)
 	}
 
-	s := grpc.NewServer()
+	s := grpc.NewServer(grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
+		myLogging(),
+		grpc_auth.UnaryServerInterceptor(authorize),
+	)))
 	pb.RegisterFileServiceServer(s, &server{})
 
 	fmt.Println("server is runnning.")
