@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"gRPC/pb"
 	"io"
@@ -16,6 +15,9 @@ import (
 	grpc_middleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpc_auth "github.com/grpc-ecosystem/go-grpc-middleware/auth"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/status"
 )
 
 type server struct {
@@ -49,6 +51,10 @@ func (*server) Download(req *pb.DownloadRequest, stream pb.FileService_DownloadS
 	fmt.Println("Download was invoked")
 	filename := req.GetFilename()
 	path := "/Users/riatoneo/workspace/gRPC/storage/" + filename
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return status.Error(codes.NotFound, "file not found")
+	}
 
 	file, err := os.Open(path)
 	if err != nil {
@@ -145,7 +151,7 @@ func authorize(ctx context.Context) (context.Context, error) {
 		return nil, err
 	}
 	if token != "test-token" {
-		return nil, errors.New("bad token")
+		return nil, status.Error(codes.Unauthenticated, "invalid token")
 	}
 	return ctx, nil
 }
@@ -156,7 +162,14 @@ func main() {
 		log.Fatalf("Failed to listen %v", err)
 	}
 
-	s := grpc.NewServer(grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
+	creds, err := credentials.NewServerTLSFromFile(
+		"ssl/localhost.pem", "ssl/localhost-key.pem")
+
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	s := grpc.NewServer(grpc.Creds(creds), grpc.UnaryInterceptor(grpc_middleware.ChainUnaryServer(
 		myLogging(),
 		grpc_auth.UnaryServerInterceptor(authorize),
 	)))
